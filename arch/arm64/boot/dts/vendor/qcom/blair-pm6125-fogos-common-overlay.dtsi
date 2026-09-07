@@ -12,6 +12,7 @@
 #include "blair-pm6125-moto-common-overlay.dtsi"
 #include "blair-fogos-common-overlay.dtsi"
 #include "fogos-charger.dtsi"
+#include "fogos-google-battery.dtsi"
 
 &pm7250b_charger {
 	dpdm-supply = <&usb2_phy0>;

@@ -1,0 +1,26 @@
+menuconfig GOOGLE_BMS
+	bool "Google Battery Management System"
+	help
+	  Say Y here to enable the Google Battery Management System.
+
+if GOOGLE_BMS
+
+config GOOGLE_BMS_SM7250
+	tristate "Google BMS for SM7250/PM7250B"
+	depends on GOOGLE_BMS
+
+config GOOGLE_BATTERY_CHARGING
+	bool "Google Battery Charging"
+	select GOOGLE_CHARGER
+	select GOOGLE_BATTERY
+
+config GOOGLE_CHARGER
+	tristate "Google Charger"
+
+config GOOGLE_BATTERY
+	tristate "Google Battery"
+
+config GOOGLE_LOGBUFFER
+	tristate "Google Logbuffer"
+
+endif # GOOGLE_BMS

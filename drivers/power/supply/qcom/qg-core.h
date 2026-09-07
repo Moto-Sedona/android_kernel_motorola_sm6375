@@ -216,6 +216,10 @@ struct qpnp_qg {
 	struct cap_learning	*cl;
 	/* charge counter */
 	struct cycle_counter	*counter;
+#if IS_ENABLED(CONFIG_GOOGLE_BMS)
+	char			cycle_str[BUCKET_COUNT * 6 + 2];
+	const char		*batt_gpn;
+#endif
 	/* ttf */
 	struct ttf		*ttf;
 };

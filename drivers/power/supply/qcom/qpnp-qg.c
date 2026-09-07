@@ -27,6 +27,7 @@
 #include <linux/poll.h>
 #include <linux/iio/consumer.h>
 #include <dt-bindings/iio/qti_power_supply_iio.h>
+#include "../google/google_bms.h"
 #include <uapi/linux/qg.h>
 #include <uapi/linux/qg-profile.h>
 #include "fg-alg.h"
@@ -2767,6 +2768,23 @@ static int qg_psy_get_property(struct power_supply *psy,
 		pval->intval = chip->cl->init_cap_uah;
 	else if (psp == POWER_SUPPLY_PROP_VOLTAGE_OCV)
 		rc = qg_sdam_read(SDAM_OCV_UV, &pval->intval);
+#if IS_ENABLED(CONFIG_GOOGLE_BMS)
+	else if (psp == POWER_SUPPLY_PROP_CYCLE_COUNTS) {
+		u16 count[BUCKET_COUNT];
+
+		rc = qg_sdam_multibyte_read(QG_SDAM_CYCLE_COUNT_OFFSET,
+						(u8 *)count,
+						sizeof(count));
+		if (rc < 0) {
+			pval->strval = NULL;
+			pr_err("cycle read failed: %d\n", rc);
+		} else {
+			gbms_cycle_count_cstr(chip->cycle_str,
+					      GBMS_CCBIN_CSTR_SIZE, count);
+			pval->strval = chip->cycle_str;
+		}
+	}
+#endif
 
 	return rc;
 }
@@ -2775,6 +2793,9 @@ static enum power_supply_property qg_psy_props[] = {
 	POWER_SUPPLY_PROP_TYPE,
 	POWER_SUPPLY_PROP_CHARGE_NOW,
 	POWER_SUPPLY_PROP_VOLTAGE_OCV,
+#if IS_ENABLED(CONFIG_GOOGLE_BMS)
+	POWER_SUPPLY_PROP_CYCLE_COUNTS,
+#endif
 };
 
 static const struct power_supply_desc qg_psy_desc = {
@@ -4749,6 +4770,89 @@ static int qpnp_qg_resume(struct device *dev)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_GOOGLE_BMS)
+static int qg_storage_iter(int index, gbms_tag_t *tag, void *ptr)
+{
+	static gbms_tag_t keys[] = { GBMS_TAG_BCNT };
+	const int count = ARRAY_SIZE(keys);
+
+	if (index >= 0 && index < count)
+		*tag = keys[index];
+	else
+		return -ENOENT;
+
+	return 0;
+}
+
+static int qg_storage_read(gbms_tag_t tag, void *buff, size_t size,
+			   void *ptr)
+{
+	int ret;
+	int offset = 0;
+
+	switch (tag) {
+	case GBMS_TAG_BCNT:
+		if (size != (BUCKET_COUNT * 2)) {
+			pr_err("BCNT read error size %zu/%d",
+					size, (BUCKET_COUNT * 2));
+			return -ERANGE;
+		}
+
+		offset = QG_SDAM_CYCLE_COUNT_OFFSET;
+		break;
+	default:
+		ret = -ENOENT;
+		break;
+	}
+
+	if (offset)
+		ret = qg_sdam_multibyte_read(offset, (u8 *)buff,
+					     BUCKET_COUNT * 2);
+	if (ret < 0) {
+		pr_err("failed to read cycle counts rc=%d\n", ret);
+		return ret;
+	}
+	return ret;
+}
+
+static int qg_storage_write(gbms_tag_t tag, const void *buff, size_t size,
+				  void *ptr)
+{
+	int ret;
+	int offset = 0;
+
+	switch (tag) {
+	case GBMS_TAG_BCNT:
+		if (size != (BUCKET_COUNT * 2)) {
+			pr_err("BCNT write error size %zu/%d",
+					size, (BUCKET_COUNT * 2));
+			return -ERANGE;
+		}
+
+		offset = QG_SDAM_CYCLE_COUNT_OFFSET;
+		break;
+	default:
+		ret = -ENOENT;
+		break;
+	}
+
+	if (offset)
+		ret = qg_sdam_multibyte_write(offset, (u8 *)buff,
+					      BUCKET_COUNT * 2);
+	if (ret < 0) {
+		pr_err("failed to write cycle counts rc=%d\n", ret);
+		return ret;
+	}
+	return ret;
+}
+
+static struct gbms_storage_desc qg_storage_dsc = {
+	.iter = qg_storage_iter,
+	.read = qg_storage_read,
+	.write = qg_storage_write,
+};
+#endif /* CONFIG_GOOGLE_BMS */
+
 static const struct dev_pm_ops qpnp_qg_pm_ops = {
 	.suspend_noirq	= qpnp_qg_suspend_noirq,
 	.resume_noirq	= qpnp_qg_resume_noirq,
@@ -4983,6 +5087,14 @@ static int qpnp_qg_probe(struct platform_device *pdev)
 		pr_err("Failed in qg_post_init rc=%d\n", rc);
 		goto fail_votable;
 	}
+
+#if IS_ENABLED(CONFIG_GOOGLE_BMS)
+	rc = gbms_storage_register(&qg_storage_dsc, "qg", chip);
+	if (rc < 0) {
+		pr_err("Failed in qg_storage_register rc=%d\n", rc);
+		goto fail_votable;
+	}
+#endif
 
 	rc = sysfs_create_groups(&chip->dev->kobj, qg_groups);
 	if (rc < 0) {
